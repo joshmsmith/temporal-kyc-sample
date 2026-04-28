@@ -1,5 +1,4 @@
 # temporal-kyc-sample
-
 A Java sample demonstrating a **customer onboarding / Know Your Customer (KYC)** flow built on [Temporal](https://temporal.io/).
 
 Customer onboarding can run for hours or days, depends on external checks and manual compliance review, and sometimes gets stuck. Temporal's durable execution model handles all of this natively.
@@ -16,6 +15,7 @@ Customer onboarding can run for hours or days, depends on external checks and ma
 | Audit trail | `logAuditEvent` activity writes to Postgres on every state transition |
 | Operator visibility | Search attributes (`ApplicationStep`, `KycStatus`, `ReviewDeadline`) upserted at each step; queryable state via `getOnboardingState` |
 | Idempotency | WorkflowId `KYC-<customerId>` prevents duplicate onboarding; `activateAccount` uses the input deterministic account ID to derive the customer ID, making retries safe  and idempotent|
+
 
 ---
 
@@ -47,6 +47,12 @@ REJECTED  submitToComplianceQueue     │
                                       │
                                   ACTIVATED
 ```
+
+## Temporal Workflow Visualization:
+
+<p align="center">
+  <img src="assets/KYC-Workflow-View.png" alt="KYC Workflow View" />
+</p>
 
 ---
 
