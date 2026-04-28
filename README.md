@@ -175,7 +175,7 @@ The starter prints the `workflowId` (`KYC-CUST-XXXX`). Open `http://localhost:82
 
 When a workflow is in `MANUAL_REVIEW_PENDING`, a compliance officer delivers a decision.
 
-### Via Signal 
+### Approve/Reject Via Signal 
 
 ```bash
 # Approve
