@@ -13,8 +13,8 @@ import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import io.temporal.samples.kyc.activities.OnboardingActivities;
 import io.temporal.samples.kyc.model.*;
-import io.temporal.samples.kyc.workflow.AuditingCustomerOnboardingWorkflowImpl;
 import io.temporal.samples.kyc.workflow.CustomerOnboardingWorkflow;
+import io.temporal.samples.kyc.workflow.CustomerOnboardingWorkflowImpl;
 import io.temporal.testing.TestWorkflowEnvironment;
 import io.temporal.worker.Worker;
 import java.time.Instant;
@@ -52,7 +52,7 @@ class CustomerOnboardingWorkflowTest {
     activities = mock(OnboardingActivities.class, withSettings().withoutAnnotations());
 
     Worker worker = testEnv.newWorker(TASK_QUEUE);
-    worker.registerWorkflowImplementationTypes(AuditingCustomerOnboardingWorkflowImpl.class);
+    worker.registerWorkflowImplementationTypes(CustomerOnboardingWorkflowImpl.class);
     worker.registerActivitiesImplementations(activities);
     testEnv.start();
 
