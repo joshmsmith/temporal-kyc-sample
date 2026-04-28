@@ -37,14 +37,14 @@ FAILED   NEEDS_MANUAL_REVIEW      PASSED
 REJECTED  submitToComplianceQueue     │
           │                           │
           ▼                           │
-   await(signal, 30 days)             │
+   await(Update, 30 days)             │
           │                           │
      ┌────┴──────────────┐            │
   decision           (timeout)        │
      │                   │            │
      │          escalateReview        │
      │                   │            │
-     │        await(signal, 7 days)   │
+     │        await(Update, 7 days)   │
      │                   │            │
      │              ┌────┴────┐       │
      │           decision  (timeout)  │
@@ -157,7 +157,7 @@ temporal operator search-attribute create --name ReviewDeadline   --type Keyword
 # Happy path — KYC passes, account activated immediately
 ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycStarter
 
-# KYC flags for manual review (workflow pauses, waiting for signal)
+# KYC flags for manual review (workflow pauses, waiting for Update)
 SCENARIO=NEEDS_REVIEW ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycStarter
 
 # KYC hard rejection — workflow ends as REJECTED
