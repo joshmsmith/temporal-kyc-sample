@@ -2,7 +2,7 @@ package io.temporal.samples.kyc;
 
 import io.temporal.client.WorkflowClient;
 import io.temporal.samples.kyc.activities.OnboardingActivitiesImpl;
-import io.temporal.samples.kyc.workflow.CustomerOnboardingWorkflowImpl;
+import io.temporal.samples.kyc.workflow.AuditingCustomerOnboardingWorkflowImpl;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import io.temporal.serviceclient.WorkflowServiceStubsOptions;
 import io.temporal.worker.Worker;
@@ -46,7 +46,7 @@ public class KycWorker {
     WorkerFactory factory = WorkerFactory.newInstance(client);
     Worker worker = factory.newWorker(taskQueue);
 
-    worker.registerWorkflowImplementationTypes(CustomerOnboardingWorkflowImpl.class);
+    worker.registerWorkflowImplementationTypes(AuditingCustomerOnboardingWorkflowImpl.class);
     worker.registerActivitiesImplementations(new OnboardingActivitiesImpl());
 
     factory.start();

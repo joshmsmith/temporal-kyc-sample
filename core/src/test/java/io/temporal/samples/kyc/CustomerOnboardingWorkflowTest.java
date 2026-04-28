@@ -9,7 +9,7 @@ import io.temporal.client.WorkflowStub;
 import io.temporal.samples.kyc.activities.OnboardingActivities;
 import io.temporal.samples.kyc.model.*;
 import io.temporal.samples.kyc.workflow.CustomerOnboardingWorkflow;
-import io.temporal.samples.kyc.workflow.CustomerOnboardingWorkflowImpl;
+import io.temporal.samples.kyc.workflow.AuditingCustomerOnboardingWorkflowImpl;
 import io.temporal.testing.TestWorkflowEnvironment;
 import io.temporal.testing.TestWorkflowExtension;
 import java.time.Duration;
@@ -30,7 +30,7 @@ class CustomerOnboardingWorkflowTest {
   @RegisterExtension
   public static final TestWorkflowExtension testWorkflowExtension =
       TestWorkflowExtension.newBuilder()
-          .registerWorkflowImplementationTypes(CustomerOnboardingWorkflowImpl.class)
+          .registerWorkflowImplementationTypes(AuditingCustomerOnboardingWorkflowImpl.class)
           .setActivityImplementations(activities)
           .build();
 

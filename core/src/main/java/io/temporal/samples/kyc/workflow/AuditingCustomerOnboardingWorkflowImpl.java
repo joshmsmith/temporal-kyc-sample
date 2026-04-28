@@ -12,14 +12,17 @@ import io.temporal.samples.kyc.model.ComplianceDecision;
 import io.temporal.samples.kyc.model.KycResult;
 import io.temporal.samples.kyc.model.KycStatus;
 import io.temporal.samples.kyc.model.OnboardingState;
+import io.temporal.samples.kyc.model.SanctionsResult;
+import io.temporal.samples.kyc.model.SanctionsStatus;
 import io.temporal.workflow.Workflow;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import org.slf4j.Logger;
 
-public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflow {
+public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflow {
 
-  private static final Logger log = Workflow.getLogger(CustomerOnboardingWorkflowImpl.class);
+  private static final Logger log = Workflow.getLogger(AuditingCustomerOnboardingWorkflowImpl.class);
 
   // ── Search attribute keys (register in Temporal namespace before running) ──
   static final SearchAttributeKey<String> APPLICATION_STEP =
@@ -30,6 +33,10 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
       SearchAttributeKey.forKeyword("KycStatus");
   static final SearchAttributeKey<String> REVIEW_DEADLINE =
       SearchAttributeKey.forKeyword("ReviewDeadline");
+  // Manually managed — Java SDK does not auto-upsert TemporalChangeVersion
+  static final SearchAttributeKey<List<String>> TEMPORAL_CHANGE_VERSION =
+      SearchAttributeKey.forKeywordList("TemporalChangeVersion");
+
   // ── Activity stubs — three distinct retry / timeout policies ──────────────
 
   /** Default: short-lived steps (document storage, queue submission, notification). */
@@ -69,6 +76,24 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
                       .build())
               .build());
 
+  /**
+   * Audit log: best-effort, never blocks workflow progress. Max 3 attempts with short timeout.
+   *
+   * <p>If the audit log is unavailable we still proceed; the event can be reconstructed from
+   * workflow history if needed.
+   */
+  private final OnboardingActivities auditActivities =
+      Workflow.newActivityStub(
+          OnboardingActivities.class,
+          ActivityOptions.newBuilder()
+              .setStartToCloseTimeout(Duration.ofSeconds(10))
+              .setRetryOptions(
+                  RetryOptions.newBuilder()
+                      .setMaximumAttempts(3)
+                      .setInitialInterval(Duration.ofSeconds(1))
+                      .build())
+              .build());
+
   // ── Mutable workflow state (survives replay because it is derived from deterministic code) ─
 
   private String step = "SUBMITTED";
@@ -95,16 +120,23 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
 
     // ── Step 1: Store documents ─────────────────────────────────────────────
     String documentId = onboardingActivities.storeDocuments(request);
+    auditActivities.logAuditEvent("DOCUMENTS_STORED", customerId, "documentId=" + documentId);
     updateStep("KYC_CHECKING", 20);
 
     // ── Step 2: KYC vendor check ────────────────────────────────────────────
     KycResult kycResult = kycActivities.performKycCheck(customerId, documentId, scenario);
     kycStatusStr = kycResult.getStatus().name();
     Workflow.upsertTypedSearchAttributes(KYC_STATUS_ATTR.valueSet(kycStatusStr));
+    auditActivities.logAuditEvent(
+        "KYC_CHECKED",
+        customerId,
+        "status=" + kycResult.getStatus() + " ref=" + kycResult.getVendorReference());
     log.info("KYC result for customer {}: {}", customerId, kycResult.getStatus());
 
     // ── Step 3: Hard KYC rejection ──────────────────────────────────────────
     if (kycResult.getStatus() == KycStatus.FAILED) {
+      auditActivities.logAuditEvent(
+          "KYC_REJECTED", customerId, "ref=" + kycResult.getVendorReference());
       onboardingActivities.notifyCustomer(customerId, "REJECTED", "KYC check did not pass.");
       updateStep("REJECTED", 100);
       ApplicationStatus status = ApplicationStatus.rejected("KYC check failed");
@@ -114,7 +146,8 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
 
     // ── Step 4: Manual compliance review (when KYC flags for review) ────────
     if (kycResult.getStatus() == KycStatus.NEEDS_MANUAL_REVIEW) {
-      onboardingActivities.submitToComplianceQueue(customerId, kycResult);
+      String ticketId = onboardingActivities.submitToComplianceQueue(customerId, kycResult);
+      auditActivities.logAuditEvent("REVIEW_SUBMITTED", customerId, "ticketId=" + ticketId);
 
       reviewDeadline =
           Instant.ofEpochMilli(Workflow.currentTimeMillis())
@@ -134,11 +167,21 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
       if (!decisionReceived) {
         // SLA breach — escalate and fail the workflow so it surfaces in the UI
         onboardingActivities.escalateReview(customerId);
+        auditActivities.logAuditEvent("REVIEW_ESCALATED", customerId, "SLA breached after 30 days");
         updateStep("REVIEW_TIMEOUT", 100);
         throw ApplicationFailure.newNonRetryableFailure(
             "Compliance review SLA exceeded 30 days for customer " + customerId, "ReviewTimeout");
       }
 
+      auditActivities.logAuditEvent(
+          "REVIEW_COMPLETED",
+          customerId,
+          "approved="
+              + reviewDecision.isApproved()
+              + " reviewer="
+              + reviewDecision.getReviewerId()
+              + " reason="
+              + reviewDecision.getReason());
       log.info(
           "Review decision received for customer {}: approved={}",
           customerId,
@@ -155,7 +198,54 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
       }
     }
 
-    // ── Step 5: Activate account ────────────────────────────────────────────
+    // ── Step 5: Sanctions screening — NEW POLICY (patching API) ────────────
+    //
+    // Workflow.getVersion() branches based on whether this execution started before or after
+    // the policy change:
+    //   - DEFAULT_VERSION (-1): old in-flight workflows that have no marker in their history
+    //     → skip sanctions screening (old policy)
+    //   - version 1: new workflows and old workflows that have not yet reached this point
+    //     → run sanctions screening (new policy)
+    //
+    // To deploy this policy change:
+    //   1. Deploy this code (Phase 1 — "patch in"). Both paths exist.
+    //   2. After all pre-patch workflows complete, bump minSupported to 1 and remove old branch.
+    //   3. After all Phase-2 workflows complete, remove the getVersion call entirely.
+    int sanctionsVersion =
+        Workflow.getVersion(
+            "sanctions-screening-v1",
+            Workflow.DEFAULT_VERSION, // minSupported: keep old path for in-flight workflows
+            1 // maxSupported: current version
+            );
+
+    // Record which version of the policy this workflow runs under, for operator filtering:
+    //   temporal workflow list --query 'TemporalChangeVersion = "sanctions-screening-v1-1"'
+    Workflow.upsertTypedSearchAttributes(
+        TEMPORAL_CHANGE_VERSION.valueSet(List.of("sanctions-screening-v1-" + sanctionsVersion)));
+
+    if (sanctionsVersion >= 1) {
+      updateStep("SANCTIONS_SCREENING", 70);
+      SanctionsResult sanctions = onboardingActivities.sanctionsScreening(customerId, scenario);
+      auditActivities.logAuditEvent(
+          "SANCTIONS_CHECKED",
+          customerId,
+          "status=" + sanctions.getStatus() + " ref=" + sanctions.getScreeningReference());
+
+      if (sanctions.getStatus() == SanctionsStatus.FLAGGED) {
+        log.warn("Customer {} flagged by sanctions screening", customerId);
+        onboardingActivities.notifyCustomer(
+            customerId, "REJECTED", "Application could not be processed at this time.");
+        updateStep("REJECTED", 100);
+        ApplicationStatus status = ApplicationStatus.rejected("Sanctions screening flagged");
+        latestStatus = status;
+        return status;
+      }
+      log.info("Sanctions screening CLEAR for customer {}", customerId);
+    } else {
+      log.info("Skipping sanctions screening for customer {} (pre-policy workflow)", customerId);
+    }
+
+    // ── Step 6: Activate account ────────────────────────────────────────────
     //
     // Workflow.randomUUID() is deterministic across replays — it always produces the same UUID
     // for a given point in history, so retrying activateAccount is safe.
@@ -163,6 +253,7 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
     updateStep("ACTIVATING", 85);
 
     String accountId = onboardingActivities.activateAccount(idempotencyKey, customerId, documentId);
+    auditActivities.logAuditEvent("ACCOUNT_ACTIVATED", customerId, "accountId=" + accountId);
     onboardingActivities.notifyCustomer(
         customerId, "ACTIVATED", "Your account is now active. Account ID: " + accountId);
     updateStep("COMPLETED", 100);
