@@ -12,7 +12,7 @@ Customer onboarding can run for hours or days, depends on external checks and ma
 |---|---|
 | Long-running / can get stuck | Single workflow with a 30-day timer SLA; worker restarts are transparent |
 | External KYC vendor check | Dedicated activity with heartbeat, exponential backoff, and `scheduleToClose` cap |
-| Human-in-the-loop review | Both **Signal** (fire-and-forget) and **Update** (synchronous with validation) |
+| Human-in-the-loop review | **Signal** (fire-and-forget) for compliance officer approval/rejection |
 | Audit trail | `logAuditEvent` activity writes to Postgres on every state transition |
 | Operator visibility | Search attributes (`ApplicationStep`, `KycStatus`, `ReviewDeadline`) upserted at each step; queryable state via `getOnboardingState` |
 | Safe policy evolution | `Workflow.getVersion("sanctions-screening-v1")` — old in-flight workflows skip the new check; new submissions run it |
@@ -37,7 +37,7 @@ FAILED   NEEDS_MANUAL_REVIEW      PASSED
 REJECTED  submitToComplianceQueue     │
           │                           │
           ▼                           │
-   await(signal/update, 30 days)      │
+   await(signal, 30 days)             │
           │                           │
      ┌────┴────┐                      │
   APPROVED  REJECTED              (merge)
@@ -67,7 +67,7 @@ temporal-kyc-sample/
 │       ├── main/java/io/temporal/samples/kyc/
 │       │   ├── KycWorker.java             — long-running worker process
 │       │   ├── KycStarter.java            — starts a workflow execution
-│       │   ├── KycApprover.java           — sends approval/rejection signal or update
+│       │   ├── KycApprover.java           — sends approval/rejection signal
 │       │   ├── KycConstants.java          — task queue name, workflow ID prefix
 │       │   ├── workflow/
 │       │   │   ├── CustomerOnboardingWorkflow.java      (interface)
@@ -108,7 +108,6 @@ The worker and starter read from environment variables:
 | `TEMPORAL_TASK_QUEUE` | `kyc-onboarding` | Task queue name |
 | `SCENARIO` | `HAPPY_PATH` | Demo scenario (see below) |
 | `DECISION` | `approve` | `approve` or `reject` (KycApprover) |
-| `MECHANISM` | `signal` | `signal` or `update` (KycApprover) |
 | `REVIEWER_ID` | `compliance-officer-1` | Reviewer identifier (KycApprover) |
 | `REASON` | — | Rejection reason (KycApprover) |
 
@@ -145,7 +144,7 @@ temporal operator search-attribute create --name ReviewDeadline   --type Keyword
 # Happy path — KYC passes, account activated immediately
 ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycStarter
 
-# KYC flags for manual review (workflow pauses, waiting for signal/update)
+# KYC flags for manual review (workflow pauses, waiting for signal)
 SCENARIO=NEEDS_REVIEW ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycStarter
 
 # KYC hard rejection — workflow ends as REJECTED
@@ -186,24 +185,6 @@ temporal workflow signal \
   --input '"reviewer-001"'
 ```
 
-### Via Update (synchronous, with validation)
-
-The Update validator rejects the call if the workflow is not in `MANUAL_REVIEW_PENDING` or a decision has already been recorded.
-
-```bash
-MECHANISM=update \
-  ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycApprover -Parg=KYC-CUST-1234
-```
-
-Or with the CLI:
-
-```bash
-temporal workflow update \
-  --workflow-id KYC-CUST-1234 \
-  --name submitComplianceDecision \
-  --input '{"approved":true,"reviewerId":"reviewer-001","reason":"All checks passed","decidedAt":"2026-04-27T10:00:00Z"}'
-```
-
 ---
 
 ## Querying workflow state
@@ -238,14 +219,14 @@ temporal workflow list --query 'TemporalChangeVersion = "sanctions-screening-v1-
 
 ## Policy change: sanctions screening
 
-This sample demonstrates `Workflow.getVersion()` — Temporal's patching API for safe in-flight policy changes.
+This sample could be extended to demonstrate `Workflow.getVersion()` — Temporal's patching API for safe in-flight policy changes.
 
 **Scenario:** A compliance policy change requires all new accounts to pass sanctions screening before activation. Many onboarding workflows are already running. Deploying the updated worker code is safe because:
 
 - **Old in-flight workflows** have no `sanctions-screening-v1` marker in their history. `getVersion` returns `DEFAULT_VERSION` (-1) during replay → they skip the new check and complete normally.
 - **New submissions** get `version = 1` recorded in their history → they run `sanctionsScreening` before activation.
 
-The relevant code in `CustomerOnboardingWorkflowImpl`:
+The relevant code in `AuditingCustomerOnboardingWorkflowImpl`:
 
 ```java
 int sanctionsVersion = Workflow.getVersion(

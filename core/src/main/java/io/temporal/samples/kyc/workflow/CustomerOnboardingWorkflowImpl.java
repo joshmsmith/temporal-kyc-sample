@@ -76,7 +76,7 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
   private int progressPct = 0;
   private Instant reviewDeadline = null;
 
-  // Set by signal or update when the workflow is in MANUAL_REVIEW_PENDING
+  // Set by signal when the workflow is in MANUAL_REVIEW_PENDING
   private ComplianceDecision reviewDecision = null;
 
   // Cached for query handler — set at the start of onboard()
