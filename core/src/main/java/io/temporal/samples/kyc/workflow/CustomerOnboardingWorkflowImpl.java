@@ -201,13 +201,11 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
   @Override
   public void approveApplication(String reviewerId) {
     log.info("Approve signal received for customer {} from reviewer {}", customerId, reviewerId);
-    // if (!"MANUAL_REVIEW_PENDING".equals(step)) {
-    //   log.warn(
-    //       "approveApplication signal ignored — workflow is in step '{}', not
-    // MANUAL_REVIEW_PENDING",
-    //       step);
-    //   return;
-    // }
+    if (!"MANUAL_REVIEW_PENDING".equals(step)) {
+      log.warn(
+          "approveApplication signal ignored — workflow is in step '{}', not MANUAL_REVIEW_PENDING",
+          step);
+    }
     reviewDecision =
         new ComplianceDecision(
             true,
@@ -227,7 +225,6 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
       log.warn(
           "rejectApplication signal ignored — workflow is in step '{}', not MANUAL_REVIEW_PENDING",
           step);
-      // return;
     }
     reviewDecision =
         new ComplianceDecision(

@@ -37,17 +37,11 @@ public interface CustomerOnboardingWorkflow {
 
   // ── Human-in-the-loop: Signal (fire-and-forget) ────────────────────────────
 
-  /**
-   * Signal: Compliance officer approves the application while it is waiting in manual review.
-   * Ignored if the workflow is not in the MANUAL_REVIEW_PENDING step.
-   */
+  /** Signal: Compliance officer approves the application while it is waiting in manual review. */
   @SignalMethod
   void approveApplication(String reviewerId);
 
-  /**
-   * Signal: Compliance officer rejects the application while it is waiting in manual review.
-   * Ignored if the workflow is not in the MANUAL_REVIEW_PENDING step.
-   */
+  /** Signal: Compliance officer rejects the application while it is waiting in manual review. */
   @SignalMethod
   void rejectApplication(String reviewerId, String reason);
 

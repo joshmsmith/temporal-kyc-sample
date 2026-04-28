@@ -26,7 +26,8 @@ public interface OnboardingActivities {
 
   /**
    * Submit the document bundle to the KYC vendor and wait for a result. Long-running: up to 10
-   * minutes per attempt, heartbeating every 30 seconds. Non-retryable on KycHardFailException.
+   * minutes per attempt, should heartbeat in final implementation. Non-retryable on
+   * KycHardFailException.
    */
   @ActivityMethod
   KycResult performKycCheck(KycCheckInput input);
