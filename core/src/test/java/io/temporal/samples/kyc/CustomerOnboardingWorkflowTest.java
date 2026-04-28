@@ -8,7 +8,9 @@ import io.grpc.ManagedChannel;
 import io.temporal.api.enums.v1.IndexedValueType;
 import io.temporal.api.operatorservice.v1.AddSearchAttributesRequest;
 import io.temporal.api.operatorservice.v1.OperatorServiceGrpc;
+import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowOptions;
+import io.temporal.client.WorkflowStub;
 import io.temporal.samples.kyc.activities.OnboardingActivities;
 import io.temporal.samples.kyc.model.*;
 import io.temporal.samples.kyc.workflow.AuditingCustomerOnboardingWorkflowImpl;
@@ -17,6 +19,7 @@ import io.temporal.testing.TestWorkflowEnvironment;
 import io.temporal.worker.Worker;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -89,5 +92,42 @@ class CustomerOnboardingWorkflowTest {
 
     assertEquals(OnboardingOutcome.ACTIVATED, result.getOutcome());
     assertEquals("ACC-001", result.getAccountId());
+  }
+
+  /**
+   * Human-in-the-loop approval: KYC flags for manual review, compliance officer approves via
+   * signal, workflow proceeds through sanctions screening and activates the account.
+   */
+  @Test
+  void testManualReviewApproved() throws Exception {
+    when(activities.storeDocuments(any())).thenReturn("DOC-001");
+    when(activities.performKycCheck(anyString(), anyString(), any()))
+        .thenReturn(new KycResult(KycStatus.NEEDS_MANUAL_REVIEW, "KYC-REF-002", Instant.now()));
+    when(activities.submitToComplianceQueue(anyString(), any())).thenReturn("TKT-001");
+    when(activities.sanctionsScreening(anyString(), any()))
+        .thenReturn(new SanctionsResult(SanctionsStatus.CLEAR, "SANC-001"));
+    when(activities.activateAccount(anyString(), anyString(), anyString())).thenReturn("ACC-002");
+
+    ApplicationRequest request =
+        new ApplicationRequest(
+            "CUST-002",
+            "Review User",
+            "review@example.com",
+            List.of("DOC-001"),
+            Instant.now(),
+            ApplicationScenario.NEEDS_REVIEW);
+
+    // Start the workflow asynchronously so we can send the approval signal.
+    WorkflowClient.start(workflow::onboard, request);
+
+    // Send the compliance officer approval signal.
+    workflow.approveApplication("reviewer-001");
+
+    // Wait for the workflow to complete (time-skipping handles the 30-day await instantly).
+    ApplicationStatus result =
+        WorkflowStub.fromTyped(workflow).getResult(10, TimeUnit.SECONDS, ApplicationStatus.class);
+
+    assertEquals(OnboardingOutcome.ACTIVATED, result.getOutcome());
+    assertEquals("ACC-002", result.getAccountId());
   }
 }
