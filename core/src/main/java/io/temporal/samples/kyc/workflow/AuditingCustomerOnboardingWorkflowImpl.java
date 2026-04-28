@@ -5,14 +5,17 @@ import io.temporal.common.RetryOptions;
 import io.temporal.common.SearchAttributeKey;
 import io.temporal.failure.ApplicationFailure;
 import io.temporal.samples.kyc.activities.OnboardingActivities;
+import io.temporal.samples.kyc.model.ActivateAccountInput;
 import io.temporal.samples.kyc.model.ApplicationRequest;
 import io.temporal.samples.kyc.model.ApplicationScenario;
 import io.temporal.samples.kyc.model.ApplicationStatus;
 import io.temporal.samples.kyc.model.ComplianceDecision;
+import io.temporal.samples.kyc.model.KycCheckInput;
 import io.temporal.samples.kyc.model.KycResult;
 import io.temporal.samples.kyc.model.KycStatus;
 import io.temporal.samples.kyc.model.OnboardingState;
 import io.temporal.samples.kyc.model.SanctionsResult;
+import io.temporal.samples.kyc.model.SanctionsScreeningInput;
 import io.temporal.samples.kyc.model.SanctionsStatus;
 import io.temporal.workflow.Workflow;
 import java.time.Duration;
@@ -116,15 +119,20 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
     ApplicationScenario scenario = request.getScenario();
 
     log.info("Onboarding started for customer {}, scenario={}", customerId, scenario);
+    // Workflow.randomUUID() is deterministic across replays — always the same value for a given
+    // point in history, making every activity call safely retryable with this key.
+    String idempotencyKey = customerId + "-" + Workflow.randomUUID().toString();
     updateStep("SUBMITTED", 5);
 
     // ── Step 1: Store documents ─────────────────────────────────────────────
-    String documentId = onboardingActivities.storeDocuments(request);
+    String documentId = onboardingActivities.storeDocuments(idempotencyKey, request);
     auditActivities.logAuditEvent("DOCUMENTS_STORED", customerId, "documentId=" + documentId);
     updateStep("KYC_CHECKING", 20);
 
     // ── Step 2: KYC vendor check ────────────────────────────────────────────
-    KycResult kycResult = kycActivities.performKycCheck(customerId, documentId, scenario);
+    KycResult kycResult =
+        kycActivities.performKycCheck(
+            new KycCheckInput(idempotencyKey, customerId, documentId, scenario));
     kycStatusStr = kycResult.getStatus().name();
     Workflow.upsertTypedSearchAttributes(KYC_STATUS_ATTR.valueSet(kycStatusStr));
     auditActivities.logAuditEvent(
@@ -137,7 +145,8 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
     if (kycResult.getStatus() == KycStatus.FAILED) {
       auditActivities.logAuditEvent(
           "KYC_REJECTED", customerId, "ref=" + kycResult.getVendorReference());
-      onboardingActivities.notifyCustomer(customerId, "REJECTED", "KYC check did not pass.");
+      onboardingActivities.notifyCustomer(
+          idempotencyKey, customerId, "REJECTED", "KYC check did not pass.");
       updateStep("REJECTED", 100);
       ApplicationStatus status = ApplicationStatus.rejected("KYC check failed");
       return status;
@@ -145,7 +154,8 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
 
     // ── Step 4: Manual compliance review (when KYC flags for review) ────────
     if (kycResult.getStatus() == KycStatus.NEEDS_MANUAL_REVIEW) {
-      String ticketId = onboardingActivities.submitToComplianceQueue(customerId, kycResult);
+      String ticketId =
+          onboardingActivities.submitToComplianceQueue(idempotencyKey, customerId, kycResult);
       auditActivities.logAuditEvent("REVIEW_SUBMITTED", customerId, "ticketId=" + ticketId);
 
       reviewDeadline =
@@ -165,7 +175,7 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
 
       if (!decisionReceived) {
         // SLA breach — escalate and fail the workflow so it surfaces in the UI
-        onboardingActivities.escalateReview(customerId);
+        onboardingActivities.escalateReview(idempotencyKey, customerId);
         auditActivities.logAuditEvent("REVIEW_ESCALATED", customerId, "SLA breached after 30 days");
         updateStep("REVIEW_TIMEOUT", 100);
         throw ApplicationFailure.newNonRetryableFailure(
@@ -188,7 +198,10 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
 
       if (!reviewDecision.isApproved()) {
         onboardingActivities.notifyCustomer(
-            customerId, "REJECTED", "Compliance review rejected: " + reviewDecision.getReason());
+            idempotencyKey,
+            customerId,
+            "REJECTED",
+            "Compliance review rejected: " + reviewDecision.getReason());
         updateStep("REJECTED", 100);
         ApplicationStatus status =
             ApplicationStatus.rejected("Compliance review rejected: " + reviewDecision.getReason());
@@ -223,7 +236,9 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
 
     if (sanctionsVersion >= 1) {
       updateStep("SANCTIONS_SCREENING", 70);
-      SanctionsResult sanctions = onboardingActivities.sanctionsScreening(customerId, scenario);
+      SanctionsResult sanctions =
+          onboardingActivities.sanctionsScreening(
+              new SanctionsScreeningInput(idempotencyKey, customerId, scenario));
       auditActivities.logAuditEvent(
           "SANCTIONS_CHECKED",
           customerId,
@@ -232,7 +247,10 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
       if (sanctions.getStatus() == SanctionsStatus.FLAGGED) {
         log.warn("Customer {} flagged by sanctions screening", customerId);
         onboardingActivities.notifyCustomer(
-            customerId, "REJECTED", "Application could not be processed at this time.");
+            idempotencyKey,
+            customerId,
+            "REJECTED",
+            "Application could not be processed at this time.");
         updateStep("REJECTED", 100);
         ApplicationStatus status = ApplicationStatus.rejected("Sanctions screening flagged");
         return status;
@@ -243,16 +261,17 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
     }
 
     // ── Step 6: Activate account ────────────────────────────────────────────
-    //
-    // Workflow.randomUUID() is deterministic across replays — it always produces the same UUID
-    // for a given point in history, so retrying activateAccount is safe.
-    String idempotencyKey = Workflow.randomUUID().toString();
     updateStep("ACTIVATING", 85);
 
-    String accountId = onboardingActivities.activateAccount(idempotencyKey, customerId, documentId);
+    String accountId =
+        onboardingActivities.activateAccount(
+            new ActivateAccountInput(idempotencyKey, customerId, documentId));
     auditActivities.logAuditEvent("ACCOUNT_ACTIVATED", customerId, "accountId=" + accountId);
     onboardingActivities.notifyCustomer(
-        customerId, "ACTIVATED", "Your account is now active. Account ID: " + accountId);
+        idempotencyKey,
+        customerId,
+        "ACTIVATED",
+        "Your account is now active. Account ID: " + accountId);
     updateStep("COMPLETED", 100);
 
     log.info("Onboarding complete for customer {}. Account: {}", customerId, accountId);
@@ -265,14 +284,23 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
   @Override
   public void approveApplication(String reviewerId) {
     log.info("Approve signal received for customer {} from reviewer {}", customerId, reviewerId);
-    // if (!"MANUAL_REVIEW_PENDING".equals(step)) {
-    //   log.warn(
-    //       "approveApplication signal ignored — workflow is in step '{}', not
-    // MANUAL_REVIEW_PENDING",
-    //       step);
-    //   return;
-    // }
-    reviewDecision = new ComplianceDecision(true, reviewerId, "Approved via signal", Instant.now());
+    // Handle the signal at any time in case it arrives before the workflow reaches the manual
+    // review step
+    // could optionally ignore early approval -- see below -- but that opens you up to some weird
+    // timing cases (approval arrives, then workflow hits manual review and waits indefinitely for a
+    // signal that has already arrived)
+    if (!"MANUAL_REVIEW_PENDING".equals(step)) {
+      log.warn(
+          "approveApplication signal ignored — workflow is in step '{}', not MANUAL_REVIEW_PENDING",
+          step);
+      //   return;
+    }
+    reviewDecision =
+        new ComplianceDecision(
+            true,
+            reviewerId,
+            "Approved via signal",
+            Instant.ofEpochMilli(Workflow.currentTimeMillis()));
   }
 
   @Override
@@ -282,13 +310,20 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
         customerId,
         reviewerId,
         reason);
+    // Handle the signal at any time in case it arrives before the workflow reaches the manual
+    // review step
+    // could optionally ignore early approval -- see below -- but that opens you up to some weird
+    // timing cases (approval arrives, then workflow hits manual review and waits indefinitely for a
+    // signal that has already arrived)
     if (!"MANUAL_REVIEW_PENDING".equals(step)) {
       log.warn(
           "rejectApplication signal ignored — workflow is in step '{}', not MANUAL_REVIEW_PENDING",
           step);
-      return;
+      // return;
     }
-    reviewDecision = new ComplianceDecision(false, reviewerId, reason, Instant.now());
+    reviewDecision =
+        new ComplianceDecision(
+            false, reviewerId, reason, Instant.ofEpochMilli(Workflow.currentTimeMillis()));
   }
 
   // ── Query handler ─────────────────────────────────────────────────────────────

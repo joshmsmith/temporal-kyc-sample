@@ -4,10 +4,12 @@ import io.temporal.activity.ActivityOptions;
 import io.temporal.common.RetryOptions;
 import io.temporal.common.SearchAttributeKey;
 import io.temporal.samples.kyc.activities.OnboardingActivities;
+import io.temporal.samples.kyc.model.ActivateAccountInput;
 import io.temporal.samples.kyc.model.ApplicationRequest;
 import io.temporal.samples.kyc.model.ApplicationScenario;
 import io.temporal.samples.kyc.model.ApplicationStatus;
 import io.temporal.samples.kyc.model.ComplianceDecision;
+import io.temporal.samples.kyc.model.KycCheckInput;
 import io.temporal.samples.kyc.model.KycResult;
 import io.temporal.samples.kyc.model.KycStatus;
 import io.temporal.samples.kyc.model.OnboardingState;
@@ -90,21 +92,27 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
     ApplicationScenario scenario = request.getScenario();
 
     log.info("Onboarding started for customer {}, scenario={}", customerId, scenario);
+    // Workflow.randomUUID() is deterministic across replays — always the same value for a given
+    // point in history, making every activity call safely retryable with this key.
+    String idempotencyKey = customerId + "-" + Workflow.randomUUID().toString();
     updateStep("SUBMITTED", 5);
 
     // ── Step 1: Store documents ─────────────────────────────────────────────
-    String documentId = onboardingActivities.storeDocuments(request);
+    String documentId = onboardingActivities.storeDocuments(idempotencyKey, request);
     updateStep("KYC_CHECKING", 20);
 
     // ── Step 2: KYC vendor check ────────────────────────────────────────────
-    KycResult kycResult = kycActivities.performKycCheck(customerId, documentId, scenario);
+    KycResult kycResult =
+        kycActivities.performKycCheck(
+            new KycCheckInput(idempotencyKey, customerId, documentId, scenario));
     kycStatusStr = kycResult.getStatus().name();
     Workflow.upsertTypedSearchAttributes(KYC_STATUS_ATTR.valueSet(kycStatusStr));
     log.info("KYC result for customer {}: {}", customerId, kycResult.getStatus());
 
     // ── Step 3: Hard KYC rejection ──────────────────────────────────────────
     if (kycResult.getStatus() == KycStatus.FAILED) {
-      onboardingActivities.notifyCustomer(customerId, "REJECTED", "KYC check did not pass.");
+      onboardingActivities.notifyCustomer(
+          idempotencyKey, customerId, "REJECTED", "KYC check did not pass.");
       updateStep("REJECTED", 100);
       ApplicationStatus status = ApplicationStatus.rejected("KYC check failed");
       return status;
@@ -112,7 +120,7 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
 
     // ── Step 4: Manual compliance review (when KYC flags for review) ────────
     if (kycResult.getStatus() == KycStatus.NEEDS_MANUAL_REVIEW) {
-      onboardingActivities.submitToComplianceQueue(customerId, kycResult);
+      onboardingActivities.submitToComplianceQueue(idempotencyKey, customerId, kycResult);
 
       reviewDeadline =
           Instant.ofEpochMilli(Workflow.currentTimeMillis())
@@ -131,7 +139,7 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
 
       if (!decisionReceived) {
         // SLA breach — escalate and wait an additional 7 days before auto-rejecting
-        onboardingActivities.escalateReview(customerId);
+        onboardingActivities.escalateReview(idempotencyKey, customerId);
         updateStep("REVIEW_TIMEOUT", 55);
         log.info(
             "Compliance review SLA exceeded for customer {}. Waiting 7 more days after escalation.",
@@ -143,7 +151,10 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
         if (!finalDecisionReceived) {
           // Still no decision after grace period — auto-reject without failing the workflow
           onboardingActivities.notifyCustomer(
-              customerId, "REJECTED", "Compliance review not completed within SLA.");
+              idempotencyKey,
+              customerId,
+              "REJECTED",
+              "Compliance review not completed within SLA.");
           updateStep("REJECTED", 100);
           return ApplicationStatus.rejected("Compliance review SLA exceeded");
         }
@@ -156,7 +167,10 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
 
       if (!reviewDecision.isApproved()) {
         onboardingActivities.notifyCustomer(
-            customerId, "REJECTED", "Compliance review rejected: " + reviewDecision.getReason());
+            idempotencyKey,
+            customerId,
+            "REJECTED",
+            "Compliance review rejected: " + reviewDecision.getReason());
         updateStep("REJECTED", 100);
         ApplicationStatus status =
             ApplicationStatus.rejected("Compliance review rejected: " + reviewDecision.getReason());
@@ -165,15 +179,16 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
     }
 
     // ── Step 5: Activate account ────────────────────────────────────────────
-    //
-    // Workflow.randomUUID() is deterministic across replays — it always produces the same UUID
-    // for a given point in history, so retrying activateAccount is safe.
-    String idempotencyKey = Workflow.randomUUID().toString();
     updateStep("ACTIVATING", 85);
 
-    String accountId = onboardingActivities.activateAccount(idempotencyKey, customerId, documentId);
+    String accountId =
+        onboardingActivities.activateAccount(
+            new ActivateAccountInput(idempotencyKey, customerId, documentId));
     onboardingActivities.notifyCustomer(
-        customerId, "ACTIVATED", "Your account is now active. Account ID: " + accountId);
+        idempotencyKey,
+        customerId,
+        "ACTIVATED",
+        "Your account is now active. Account ID: " + accountId);
     updateStep("COMPLETED", 100);
 
     log.info("Onboarding complete for customer {}. Account: {}", customerId, accountId);
@@ -193,7 +208,12 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
     //       step);
     //   return;
     // }
-    reviewDecision = new ComplianceDecision(true, reviewerId, "Approved via signal", Instant.now());
+    reviewDecision =
+        new ComplianceDecision(
+            true,
+            reviewerId,
+            "Approved via signal",
+            Instant.ofEpochMilli(Workflow.currentTimeMillis()));
   }
 
   @Override
@@ -207,9 +227,11 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
       log.warn(
           "rejectApplication signal ignored — workflow is in step '{}', not MANUAL_REVIEW_PENDING",
           step);
-      return;
+      // return;
     }
-    reviewDecision = new ComplianceDecision(false, reviewerId, reason, Instant.now());
+    reviewDecision =
+        new ComplianceDecision(
+            false, reviewerId, reason, Instant.ofEpochMilli(Workflow.currentTimeMillis()));
   }
 
   // ── Query handler ─────────────────────────────────────────────────────────────

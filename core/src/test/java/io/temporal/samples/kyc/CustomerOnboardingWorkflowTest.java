@@ -72,12 +72,12 @@ class CustomerOnboardingWorkflowTest {
   /** Happy path: documents stored, KYC passes, sanctions clear, account activated. */
   @Test
   void testHappyPath() {
-    when(activities.storeDocuments(any())).thenReturn("DOC-001");
-    when(activities.performKycCheck(anyString(), anyString(), any()))
+    when(activities.storeDocuments(anyString(), any())).thenReturn("DOC-001");
+    when(activities.performKycCheck(any()))
         .thenReturn(new KycResult(KycStatus.PASSED, "KYC-REF-001", Instant.now()));
-    when(activities.sanctionsScreening(anyString(), any()))
+    when(activities.sanctionsScreening(any()))
         .thenReturn(new SanctionsResult(SanctionsStatus.CLEAR, "SANC-001"));
-    when(activities.activateAccount(anyString(), anyString(), anyString())).thenReturn("ACC-001");
+    when(activities.activateAccount(any())).thenReturn("ACC-001");
 
     ApplicationRequest request =
         new ApplicationRequest(
@@ -100,13 +100,13 @@ class CustomerOnboardingWorkflowTest {
    */
   @Test
   void testManualReviewApproved() throws Exception {
-    when(activities.storeDocuments(any())).thenReturn("DOC-001");
-    when(activities.performKycCheck(anyString(), anyString(), any()))
+    when(activities.storeDocuments(anyString(), any())).thenReturn("DOC-001");
+    when(activities.performKycCheck(any()))
         .thenReturn(new KycResult(KycStatus.NEEDS_MANUAL_REVIEW, "KYC-REF-002", Instant.now()));
-    when(activities.submitToComplianceQueue(anyString(), any())).thenReturn("TKT-001");
-    when(activities.sanctionsScreening(anyString(), any()))
+    when(activities.submitToComplianceQueue(anyString(), anyString(), any())).thenReturn("TKT-001");
+    when(activities.sanctionsScreening(any()))
         .thenReturn(new SanctionsResult(SanctionsStatus.CLEAR, "SANC-001"));
-    when(activities.activateAccount(anyString(), anyString(), anyString())).thenReturn("ACC-002");
+    when(activities.activateAccount(any())).thenReturn("ACC-002");
 
     ApplicationRequest request =
         new ApplicationRequest(
