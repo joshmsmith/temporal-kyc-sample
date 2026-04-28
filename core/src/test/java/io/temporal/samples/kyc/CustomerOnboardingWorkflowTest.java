@@ -94,7 +94,7 @@ class CustomerOnboardingWorkflowTest {
 
   /**
    * Human-in-the-loop approval: KYC flags for manual review, compliance officer approves via
-   * signal, workflow activates the account.
+   * update, workflow activates the account.
    */
   @Test
   void testManualReviewApproved() throws Exception {

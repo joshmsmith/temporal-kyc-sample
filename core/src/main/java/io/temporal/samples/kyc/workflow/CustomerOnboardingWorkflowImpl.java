@@ -38,7 +38,8 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
       Workflow.newActivityStub(
           OnboardingActivities.class,
           ActivityOptions.newBuilder()
-              .setStartToCloseTimeout(Duration.ofSeconds(30))
+              .setStartToCloseTimeout(Duration.ofMinutes(1))
+              .setScheduleToCloseTimeout(Duration.ofHours(1))
               .setRetryOptions(
                   RetryOptions.newBuilder()
                       .setInitialInterval(Duration.ofSeconds(1))
@@ -49,7 +50,7 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
               .build());
 
   /**
-   * KYC vendor: potentially slow, heartbeats required, hard-fail is non-retryable.
+   * KYC vendor: frequent polling, potentially a long-running step, heartbeats required.
    *
    * <p>scheduleToClose caps total time including all retries at 1 hour, preventing a stuck KYC
    * check from blocking the workflow indefinitely.
@@ -77,7 +78,7 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
   private int progressPct = 0;
   private Instant reviewDeadline = null;
 
-  // Set by signal when the workflow is in MANUAL_REVIEW_PENDING
+  // Set by Update when the workflow is in MANUAL_REVIEW_PENDING
   private ComplianceDecision reviewDecision = null;
 
   // Cached for query handler — set at the start of onboard()
@@ -108,12 +109,12 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
     Workflow.upsertTypedSearchAttributes(KYC_STATUS_ATTR.valueSet(kycStatusStr));
     log.info("KYC result for customer {}: {}", customerId, kycResult.getStatus());
 
-    // ── Step 3: Hard KYC rejection ──────────────────────────────────────────
+    // ── Step 3: Handle KYC rejection ──────────────────────────────────────────
     if (kycResult.getStatus() == KycStatus.FAILED) {
       onboardingActivities.notifyCustomer(
           idempotencyKey, customerId, "REJECTED", "KYC check did not pass.");
       updateStep("REJECTED", 100);
-      ApplicationStatus status = ApplicationStatus.rejected("KYC check failed");
+      ApplicationStatus status = ApplicationStatus.rejected("KYC check did not pass.");
       return status;
     }
 
