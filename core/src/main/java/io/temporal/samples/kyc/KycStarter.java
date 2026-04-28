@@ -19,7 +19,7 @@ import org.slf4j.LoggerFactory;
  * <p>Usage: {@code ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycStarter}
  *
  * <p>To choose a scenario, set the SCENARIO environment variable to one of: HAPPY_PATH,
- * NEEDS_REVIEW, HARD_FAIL, API_DOWNTIME, SANCTIONS_FLAGGED (default: HAPPY_PATH)
+ * NEEDS_REVIEW, HARD_FAIL, API_DOWNTIME (default: HAPPY_PATH)
  *
  * <p>The workflowId is set to {@code KYC-<customerId>}, so re-running with the same customerId
  * while a workflow is already running will attach to the existing execution rather than starting a

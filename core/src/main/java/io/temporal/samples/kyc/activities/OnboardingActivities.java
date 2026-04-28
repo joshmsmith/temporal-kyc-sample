@@ -6,8 +6,6 @@ import io.temporal.samples.kyc.model.ActivateAccountInput;
 import io.temporal.samples.kyc.model.ApplicationRequest;
 import io.temporal.samples.kyc.model.KycCheckInput;
 import io.temporal.samples.kyc.model.KycResult;
-import io.temporal.samples.kyc.model.SanctionsResult;
-import io.temporal.samples.kyc.model.SanctionsScreeningInput;
 
 /**
  * All activities executed as part of the customer onboarding workflow.
@@ -67,12 +65,4 @@ public interface OnboardingActivities {
    */
   @ActivityMethod
   void notifyCustomer(String idempotencyKey, String customerId, String status, String message);
-
-  /**
-   * NEW POLICY (sanctions-screening-v1): Screen the applicant against sanctions and watchlists.
-   * Added via Workflow.getVersion() patch — only runs for workflows started after the policy
-   * change. In-flight older workflows skip this step automatically during replay.
-   */
-  @ActivityMethod
-  SanctionsResult sanctionsScreening(SanctionsScreeningInput input);
 }

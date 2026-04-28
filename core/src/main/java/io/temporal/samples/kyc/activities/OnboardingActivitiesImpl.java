@@ -7,9 +7,6 @@ import io.temporal.samples.kyc.model.ApplicationScenario;
 import io.temporal.samples.kyc.model.KycCheckInput;
 import io.temporal.samples.kyc.model.KycResult;
 import io.temporal.samples.kyc.model.KycStatus;
-import io.temporal.samples.kyc.model.SanctionsResult;
-import io.temporal.samples.kyc.model.SanctionsScreeningInput;
-import io.temporal.samples.kyc.model.SanctionsStatus;
 import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,7 +23,6 @@ import org.slf4j.LoggerFactory;
  *   <li>activateAccount → POST to account service with idempotency header
  *   <li>logAuditEvent → INSERT INTO audit_events (Postgres) with ON CONFLICT DO NOTHING
  *   <li>notifyCustomer → send via email/SMS gateway
- *   <li>sanctionsScreening → call OFAC / sanctions screening vendor API
  * </ul>
  */
 public class OnboardingActivitiesImpl implements OnboardingActivities {
@@ -82,7 +78,6 @@ public class OnboardingActivitiesImpl implements OnboardingActivities {
         break;
 
       case NEEDS_REVIEW:
-      case SANCTIONS_FLAGGED:
         log.info("[KYC VENDOR] Check complete: NEEDS_MANUAL_REVIEW for customer {}", customerId);
         sleep(800);
         return new KycResult(
@@ -160,25 +155,6 @@ public class OnboardingActivitiesImpl implements OnboardingActivities {
     //   optionally can use customerId+status as idempotency key to avoid duplicate notifications on
     // retries
     sleep(200);
-  }
-
-  @Override
-  public SanctionsResult sanctionsScreening(SanctionsScreeningInput input) {
-    String customerId = input.getCustomerId();
-    ApplicationScenario scenario = input.getScenario();
-    log.info("[SANCTIONS] Running sanctions screening for customer {}", customerId);
-    // IMPL-TO-DO: Call OFAC / watchlist API; check result against sanctions lists
-    sleep(400);
-
-    if (scenario == ApplicationScenario.SANCTIONS_FLAGGED) {
-      String ref = "SANC-FLAG-" + customerId.toUpperCase();
-      log.warn("[SANCTIONS] Customer {} FLAGGED (ref: {})", customerId, ref);
-      return new SanctionsResult(SanctionsStatus.FLAGGED, ref);
-    }
-
-    String ref = "SANC-CLR-" + customerId.toUpperCase();
-    log.info("[SANCTIONS] Customer {} CLEAR (ref: {})", customerId, ref);
-    return new SanctionsResult(SanctionsStatus.CLEAR, ref);
   }
 
   private void sleep(long millis) {

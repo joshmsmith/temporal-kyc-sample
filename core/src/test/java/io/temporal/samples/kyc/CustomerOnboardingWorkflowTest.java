@@ -69,14 +69,12 @@ class CustomerOnboardingWorkflowTest {
     testEnv.close();
   }
 
-  /** Happy path: documents stored, KYC passes, sanctions clear, account activated. */
+  /** Happy path: documents stored, KYC passes, account activated. */
   @Test
   void testHappyPath() {
     when(activities.storeDocuments(anyString(), any())).thenReturn("DOC-001");
     when(activities.performKycCheck(any()))
         .thenReturn(new KycResult(KycStatus.PASSED, "KYC-REF-001", Instant.now()));
-    when(activities.sanctionsScreening(any()))
-        .thenReturn(new SanctionsResult(SanctionsStatus.CLEAR, "SANC-001"));
     when(activities.activateAccount(any())).thenReturn("ACC-001");
 
     ApplicationRequest request =
@@ -96,7 +94,7 @@ class CustomerOnboardingWorkflowTest {
 
   /**
    * Human-in-the-loop approval: KYC flags for manual review, compliance officer approves via
-   * signal, workflow proceeds through sanctions screening and activates the account.
+   * signal, workflow activates the account.
    */
   @Test
   void testManualReviewApproved() throws Exception {
@@ -104,8 +102,6 @@ class CustomerOnboardingWorkflowTest {
     when(activities.performKycCheck(any()))
         .thenReturn(new KycResult(KycStatus.NEEDS_MANUAL_REVIEW, "KYC-REF-002", Instant.now()));
     when(activities.submitToComplianceQueue(anyString(), anyString(), any())).thenReturn("TKT-001");
-    when(activities.sanctionsScreening(any()))
-        .thenReturn(new SanctionsResult(SanctionsStatus.CLEAR, "SANC-001"));
     when(activities.activateAccount(any())).thenReturn("ACC-002");
 
     ApplicationRequest request =

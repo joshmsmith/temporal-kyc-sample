@@ -2,7 +2,7 @@
 
 A Java sample demonstrating a **customer onboarding / Know Your Customer (KYC)** flow built on [Temporal](https://temporal.io/).
 
-Customer onboarding can run for hours or days, depends on external checks and manual compliance review, and sometimes gets stuck. Policy changes may happen while workflows are already in flight. Temporal's durable execution model handles all of this natively.
+Customer onboarding can run for hours or days, depends on external checks and manual compliance review, and sometimes gets stuck. Temporal's durable execution model handles all of this natively.
 
 ---
 
@@ -15,7 +15,6 @@ Customer onboarding can run for hours or days, depends on external checks and ma
 | Human-in-the-loop review | **Signal** (fire-and-forget) for compliance officer approval/rejection |
 | Audit trail | `logAuditEvent` activity writes to Postgres on every state transition |
 | Operator visibility | Search attributes (`ApplicationStep`, `KycStatus`, `ReviewDeadline`) upserted at each step; queryable state via `getOnboardingState` |
-| Safe policy evolution | `Workflow.getVersion("sanctions-screening-v1")` — old in-flight workflows skip the new check; new submissions run it |
 | Idempotency | WorkflowId `KYC-<customerId>` prevents duplicate onboarding; `activateAccount` uses the input deterministic account ID to derive the customer ID, making retries safe  and idempotent|
 
 ---
@@ -44,14 +43,9 @@ REJECTED  submitToComplianceQueue     │
      │         │                      │
      │      REJECTED                  │
      │                                │
-     └──────────────────► sanctionsScreening ── [NEW POLICY v1]
+     └──────────────────► activateAccount ── [Account Service]
                                       │
-                              ┌───────┴───────┐
-                           FLAGGED          CLEAR
-                              │                │
-                           REJECTED      activateAccount ── [Account Service]
-                                              │
-                                          ACTIVATED
+                                  ACTIVATED
 ```
 
 ---
@@ -83,7 +77,6 @@ temporal-kyc-sample/
 │       │       ├── KycResult.java / KycStatus.java
 │       │       ├── OnboardingState.java      (query return type)
 │       │       ├── OnboardingOutcome.java
-│       │       └── SanctionsResult.java / SanctionsStatus.java
 │       └── test/java/io/temporal/samples/kyc/
 │           └── CustomerOnboardingWorkflowTest.java
 ```
@@ -152,9 +145,6 @@ SCENARIO=HARD_FAIL ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycS
 
 # KYC vendor times out 4 times before succeeding (watch retries in the UI)
 SCENARIO=API_DOWNTIME ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycStarter
-
-# KYC passes, but new sanctions screening policy flags the applicant
-SCENARIO=SANCTIONS_FLAGGED ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycStarter
 ```
 
 The starter prints the `workflowId` (`KYC-CUST-XXXX`). Open `http://localhost:8233` to watch progress in the Temporal UI.
@@ -207,47 +197,8 @@ temporal workflow list --query 'ApplicationStep = "MANUAL_REVIEW_PENDING"'
 
 # All workflows where KYC passed
 temporal workflow list --query 'KycStatus = "PASSED"'
-
-# Workflows running under the new sanctions screening policy
-temporal workflow list --query 'TemporalChangeVersion = "sanctions-screening-v1-1"'
-
-# Workflows that pre-date the policy change (still on old path during replay)
-temporal workflow list --query 'TemporalChangeVersion = "sanctions-screening-v1--1"'
 ```
 
----
-
-## Policy change: sanctions screening
-
-This sample could be extended to demonstrate `Workflow.getVersion()` — Temporal's patching API for safe in-flight policy changes.
-
-**Scenario:** A compliance policy change requires all new accounts to pass sanctions screening before activation. Many onboarding workflows are already running. Deploying the updated worker code is safe because:
-
-- **Old in-flight workflows** have no `sanctions-screening-v1` marker in their history. `getVersion` returns `DEFAULT_VERSION` (-1) during replay → they skip the new check and complete normally.
-- **New submissions** get `version = 1` recorded in their history → they run `sanctionsScreening` before activation.
-
-The relevant code in `AuditingCustomerOnboardingWorkflowImpl`:
-
-```java
-int sanctionsVersion = Workflow.getVersion(
-    "sanctions-screening-v1",
-    Workflow.DEFAULT_VERSION,  // min: keep old path for in-flight workflows
-    1                          // max: current version
-);
-Workflow.upsertTypedSearchAttributes(
-    TEMPORAL_CHANGE_VERSION.valueSet(List.of("sanctions-screening-v1-" + sanctionsVersion)));
-
-if (sanctionsVersion >= 1) {
-    SanctionsResult sanctions = defaultActivities.sanctionsScreening(customerId, scenario);
-    // ... handle FLAGGED
-}
-```
-
-**Three-phase cleanup** (after all pre-patch workflows complete):
-
-1. **Now (Phase 1 — patch in):** Both paths in code. Currently deployed.
-2. **Phase 2 — deprecate:** Set `minSupported = 1`, remove old branch.
-3. **Phase 3 — remove:** Delete the `getVersion` call entirely.
 
 ---
 
@@ -257,7 +208,7 @@ if (sanctionsVersion >= 1) {
 ./gradlew :core:test
 ```
 
-Six tests covering: happy path, manual review approved, manual review rejected, 30-day SLA timeout (clock fast-forwarded), KYC hard fail, and sanctions screening flagged.
+Six tests covering: happy path, manual review approved, manual review rejected, 30-day SLA timeout (clock fast-forwarded), and KYC hard fail.
 
 ---
 
@@ -265,7 +216,7 @@ Six tests covering: happy path, manual review approved, manual review rejected, 
 
 Each activity method in `OnboardingActivitiesImpl` contains a `// IMPL-TO-DO:` comment marking where the real system call goes.
 
-Activities with multiple parameters use a single input object (e.g., `KycCheckInput`, `SanctionsScreeningInput`, `ActivateAccountInput`). This is intentional: Temporal serializes activity arguments positionally, so adding a new parameter to a flat signature is a breaking change for in-flight workflows. Adding a new field to an input object is backwards-compatible because Jackson ignores unknown fields during deserialization.
+Activities with multiple parameters use a single input object (e.g., `KycCheckInput`, `ActivateAccountInput`). This is intentional: Temporal serializes activity arguments positionally, so adding a new parameter to a flat signature is a breaking change for in-flight workflows. Adding a new field to an input object is backwards-compatible because Jackson ignores unknown fields during deserialization.
 
 | Activity | Integration |
 |---|---|
@@ -276,5 +227,4 @@ Activities with multiple parameters use a single input object (e.g., `KycCheckIn
 | `activateAccount` | POST to account service with `Idempotency-Key` header |
 | `logAuditEvent` | `INSERT INTO audit_events … ON CONFLICT DO NOTHING` (Postgres) |
 | `notifyCustomer` | Email / SMS gateway |
-| `sanctionsScreening` | OFAC / watchlist vendor API |
 

@@ -14,13 +14,9 @@ import io.temporal.samples.kyc.model.KycCheckInput;
 import io.temporal.samples.kyc.model.KycResult;
 import io.temporal.samples.kyc.model.KycStatus;
 import io.temporal.samples.kyc.model.OnboardingState;
-import io.temporal.samples.kyc.model.SanctionsResult;
-import io.temporal.samples.kyc.model.SanctionsScreeningInput;
-import io.temporal.samples.kyc.model.SanctionsStatus;
 import io.temporal.workflow.Workflow;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
 import org.slf4j.Logger;
 
 public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflow {
@@ -37,9 +33,6 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
       SearchAttributeKey.forKeyword("KycStatus");
   static final SearchAttributeKey<String> REVIEW_DEADLINE =
       SearchAttributeKey.forKeyword("ReviewDeadline");
-  // Manually managed — Java SDK does not auto-upsert TemporalChangeVersion
-  static final SearchAttributeKey<List<String>> TEMPORAL_CHANGE_VERSION =
-      SearchAttributeKey.forKeywordList("TemporalChangeVersion");
 
   // ── Activity stubs — three distinct retry / timeout policies ──────────────
 
@@ -209,58 +202,7 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
       }
     }
 
-    // ── Step 5: Sanctions screening — NEW POLICY (patching API) ────────────
-    //
-    // Workflow.getVersion() branches based on whether this execution started before or after
-    // the policy change:
-    //   - DEFAULT_VERSION (-1): old in-flight workflows that have no marker in their history
-    //     → skip sanctions screening (old policy)
-    //   - version 1: new workflows and old workflows that have not yet reached this point
-    //     → run sanctions screening (new policy)
-    //
-    // To deploy this policy change:
-    //   1. Deploy this code (Phase 1 — "patch in"). Both paths exist.
-    //   2. After all pre-patch workflows complete, bump minSupported to 1 and remove old branch.
-    //   3. After all Phase-2 workflows complete, remove the getVersion call entirely.
-    int sanctionsVersion =
-        Workflow.getVersion(
-            "sanctions-screening-v1",
-            Workflow.DEFAULT_VERSION, // minSupported: keep old path for in-flight workflows
-            1 // maxSupported: current version
-            );
-
-    // Record which version of the policy this workflow runs under, for operator filtering:
-    //   temporal workflow list --query 'TemporalChangeVersion = "sanctions-screening-v1-1"'
-    Workflow.upsertTypedSearchAttributes(
-        TEMPORAL_CHANGE_VERSION.valueSet(List.of("sanctions-screening-v1-" + sanctionsVersion)));
-
-    if (sanctionsVersion >= 1) {
-      updateStep("SANCTIONS_SCREENING", 70);
-      SanctionsResult sanctions =
-          onboardingActivities.sanctionsScreening(
-              new SanctionsScreeningInput(idempotencyKey, customerId, scenario));
-      auditActivities.logAuditEvent(
-          "SANCTIONS_CHECKED",
-          customerId,
-          "status=" + sanctions.getStatus() + " ref=" + sanctions.getScreeningReference());
-
-      if (sanctions.getStatus() == SanctionsStatus.FLAGGED) {
-        log.warn("Customer {} flagged by sanctions screening", customerId);
-        onboardingActivities.notifyCustomer(
-            idempotencyKey,
-            customerId,
-            "REJECTED",
-            "Application could not be processed at this time.");
-        updateStep("REJECTED", 100);
-        ApplicationStatus status = ApplicationStatus.rejected("Sanctions screening flagged");
-        return status;
-      }
-      log.info("Sanctions screening CLEAR for customer {}", customerId);
-    } else {
-      log.info("Skipping sanctions screening for customer {} (pre-policy workflow)", customerId);
-    }
-
-    // ── Step 6: Activate account ────────────────────────────────────────────
+    // ── Step 5: Activate account ────────────────────────────────────────────
     updateStep("ACTIVATING", 85);
 
     String accountId =
