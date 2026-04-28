@@ -140,9 +140,7 @@ temporal server start-dev
 ### 2. Register custom search attributes
 
 ```bash
-temporal operator search-attribute create --name ApplicationStep  --type Keyword
-temporal operator search-attribute create --name KycStatus        --type Keyword
-temporal operator search-attribute create --name ReviewDeadline   --type Keyword
+./scripts/setup.sh
 ```
 
 ### 3. Start the worker
