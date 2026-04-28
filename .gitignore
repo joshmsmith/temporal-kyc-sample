@@ -2,6 +2,9 @@
 build/
 .gradle/
 
+# IDE
+.vscode/
+
 # Local machine-specific Gradle properties (e.g. org.gradle.java.home)
 gradle.properties
 
