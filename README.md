@@ -11,7 +11,7 @@ Customer onboarding can run for hours or days, depends on external checks and ma
 |---|---|
 | Long-running / can get stuck | Single workflow with a 30-day timer SLA; worker restarts are transparent |
 | External KYC vendor check | Dedicated activity with heartbeat, exponential backoff, and `scheduleToClose` cap |
-| Human-in-the-loop review | **Signal** (fire-and-forget) for compliance officer approval/rejection |
+| Human-in-the-loop review | Temporal Durable Timers and Signals for compliance officer approval/rejection |
 | Audit trail | `logAuditEvent` activity writes to Postgres on every state transition |
 | Operator visibility | Search attributes (`ApplicationStep`, `KycStatus`, `ReviewDeadline`) upserted at each step; queryable state via `getOnboardingState` |
 | Idempotency | WorkflowId `KYC-<customerId>` prevents duplicate onboarding; `activateAccount` uses the input deterministic account ID to derive the customer ID, making retries safe  and idempotent|
