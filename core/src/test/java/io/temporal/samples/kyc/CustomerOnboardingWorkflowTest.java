@@ -44,7 +44,6 @@ class CustomerOnboardingWorkflowTest {
         AddSearchAttributesRequest.newBuilder()
             .setNamespace(testEnv.getNamespace())
             .putSearchAttributes("ApplicationStep", IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD)
-            .putSearchAttributes("CustomerId", IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD)
             .putSearchAttributes("KycStatus", IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD)
             .putSearchAttributes("ReviewDeadline", IndexedValueType.INDEXED_VALUE_TYPE_KEYWORD)
             .build());
@@ -137,5 +136,53 @@ class CustomerOnboardingWorkflowTest {
 
     assertEquals(OnboardingOutcome.ACTIVATED, result.getOutcome());
     assertEquals("ACC-002", result.getAccountId());
+  }
+
+  /**
+   * Human-in-the-loop rejection: KYC flags for manual review, compliance officer rejects via
+   * update, workflow ends as REJECTED.
+   */
+  @Test
+  void testManualReviewRejected() throws Exception {
+    when(activities.storeDocuments(anyString(), any())).thenReturn("DOC-001");
+    when(activities.performKycCheck(any()))
+        .thenReturn(new KycResult(KycStatus.NEEDS_MANUAL_REVIEW, "KYC-REF-003", Instant.now()));
+    when(activities.submitToComplianceQueue(anyString(), anyString(), any())).thenReturn("TKT-002");
+
+    ApplicationRequest request =
+        new ApplicationRequest(
+            "CUST-003",
+            "Reject User",
+            "reject@example.com",
+            List.of("DOC-001"),
+            Instant.now(),
+            ApplicationScenario.NEEDS_REVIEW);
+
+    // Start the workflow asynchronously so we can send the rejection update.
+    WorkflowClient.start(workflow::onboard, request);
+
+    // Wait until the workflow is in MANUAL_REVIEW_PENDING before sending the update.
+    long deadline = System.currentTimeMillis() + 5_000;
+    while (!"MANUAL_REVIEW_PENDING".equals(workflow.getOnboardingState().getStep())) {
+      assertTrue(
+          System.currentTimeMillis() < deadline, "Timed out waiting for MANUAL_REVIEW_PENDING");
+      Thread.sleep(50);
+    }
+
+    // Send the compliance officer rejection update and verify the acknowledgement.
+    ComplianceDecision ack = workflow.rejectApplication("reviewer-002", "Incomplete documentation");
+    assertFalse(ack.isApproved());
+    assertEquals("reviewer-002", ack.getReviewerId());
+    assertEquals("Incomplete documentation", ack.getReason());
+
+    // Wait for the workflow to complete.
+    ApplicationStatus result =
+        WorkflowStub.fromTyped(workflow).getResult(10, TimeUnit.SECONDS, ApplicationStatus.class);
+
+    assertEquals(OnboardingOutcome.REJECTED, result.getOutcome());
+    assertTrue(result.getMessage().contains("Incomplete documentation"));
+
+    // activateAccount should never have been called
+    verify(activities, never()).activateAccount(any());
   }
 }

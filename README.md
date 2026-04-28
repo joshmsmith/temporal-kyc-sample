@@ -250,3 +250,16 @@ Activities with multiple parameters often use a single input object (e.g., `KycC
 | `logAuditEvent` | `INSERT INTO audit_events … ON CONFLICT DO NOTHING` (Postgres) |
 | `notifyCustomer` | Email / SMS gateway |
 
+---
+
+## Versioning and change management
+
+This sample intentionally doesn't demonstrate workflow versioning — doing it justice requires a scenario where a policy change lands while executions are already in flight, so the contrast between old and new behavior is visible. This is a bit of extra complexity that would distract from the core value of Temporal for this use case.
+
+When that situation arises, the right approach depends on what needs to change:
+
+- **New workflows only** — use [Worker Versioning](https://docs.temporal.io/workers#worker-versioning) to pin a set of workers to a deployment and roll forward cleanly without touching running executions.
+- **Running workflows must adopt the new behavior** — use [Auto-Upgrade Workers](https://docs.temporal.io/versioning) so new workflow code is picked up automatically, or use the `Workflow.getVersion` patching API to branch old and new execution paths. Patching lets existing workflows replay correctly against their pre-change history while new workflows take the updated path.
+
+Happy to walk through the design for either approach.
+
