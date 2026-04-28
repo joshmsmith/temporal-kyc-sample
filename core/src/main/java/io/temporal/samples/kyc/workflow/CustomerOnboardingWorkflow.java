@@ -2,9 +2,10 @@ package io.temporal.samples.kyc.workflow;
 
 import io.temporal.samples.kyc.model.ApplicationRequest;
 import io.temporal.samples.kyc.model.ApplicationStatus;
+import io.temporal.samples.kyc.model.ComplianceDecision;
 import io.temporal.samples.kyc.model.OnboardingState;
 import io.temporal.workflow.QueryMethod;
-import io.temporal.workflow.SignalMethod;
+import io.temporal.workflow.UpdateMethod;
 import io.temporal.workflow.WorkflowInterface;
 import io.temporal.workflow.WorkflowMethod;
 
@@ -16,9 +17,9 @@ import io.temporal.workflow.WorkflowMethod;
  *
  * <h3>Human-in-the-loop</h3>
  *
- * Signals are provided for a compliance officer to deliver a review decision: {@link
- * #approveApplication} / {@link #rejectApplication} — fire-and-forget Signals, suitable for CLI
- * tools and async integrations.
+ * Updates are provided for a compliance officer to deliver a review decision: {@link
+ * #approveApplication} / {@link #rejectApplication} — synchronous Updates that validate the
+ * workflow is in the correct review state before accepting the decision.
  *
  * <h3>Operator visibility</h3>
  *
@@ -35,15 +36,23 @@ public interface CustomerOnboardingWorkflow {
   @WorkflowMethod
   ApplicationStatus onboard(ApplicationRequest request);
 
-  // ── Human-in-the-loop: Signal (fire-and-forget) ────────────────────────────
+  // ── Human-in-the-loop: Update (validated, synchronous) ─────────────────────
 
-  /** Signal: Compliance officer approves the application while it is waiting in manual review. */
-  @SignalMethod
-  void approveApplication(String reviewerId);
+  /**
+   * Update: Compliance officer approves the application while it is waiting in manual review.
+   *
+   * @return the recorded {@link ComplianceDecision} as confirmation
+   */
+  @UpdateMethod
+  ComplianceDecision approveApplication(String reviewerId);
 
-  /** Signal: Compliance officer rejects the application while it is waiting in manual review. */
-  @SignalMethod
-  void rejectApplication(String reviewerId, String reason);
+  /**
+   * Update: Compliance officer rejects the application while it is waiting in manual review.
+   *
+   * @return the recorded {@link ComplianceDecision} as confirmation
+   */
+  @UpdateMethod
+  ComplianceDecision rejectApplication(String reviewerId, String reason);
 
   // ── Operator visibility: Query ───────────────────────────────────────────────
 

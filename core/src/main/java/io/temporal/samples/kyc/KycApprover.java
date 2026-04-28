@@ -1,7 +1,8 @@
 package io.temporal.samples.kyc;
 
 import io.temporal.client.WorkflowClient;
-import io.temporal.client.WorkflowStub;
+import io.temporal.samples.kyc.model.ComplianceDecision;
+import io.temporal.samples.kyc.workflow.CustomerOnboardingWorkflow;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import io.temporal.serviceclient.WorkflowServiceStubsOptions;
 import org.slf4j.Logger;
@@ -13,11 +14,11 @@ import org.slf4j.LoggerFactory;
  * <p>Usage:
  *
  * <pre>
- * # Approve via Signal (fire-and-forget):
+ * # Approve via Update (synchronous, validates workflow state):
  * ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycApprover \
  *   -Parg=KYC-CUST-1234
  *
- * # Reject via Signal:
+ * # Reject via Update:
  * DECISION=reject REASON="Incomplete documentation" \
  *   ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycApprover \
  *   -Parg=KYC-CUST-1234
@@ -52,7 +53,7 @@ public class KycApprover {
     boolean approved = "approve".equalsIgnoreCase(decision);
 
     log.info(
-        "Sending {} decision to workflow {} via signal (reviewer={}, approved={})",
+        "Sending {} decision to workflow {} via update (reviewer={}, approved={})",
         decision,
         workflowId,
         reviewerId,
@@ -67,13 +68,14 @@ public class KycApprover {
             service,
             io.temporal.client.WorkflowClientOptions.newBuilder().setNamespace(namespace).build());
 
-    WorkflowStub untyped = client.newUntypedWorkflowStub(workflowId);
+    CustomerOnboardingWorkflow workflow =
+        client.newWorkflowStub(CustomerOnboardingWorkflow.class, workflowId);
     if (approved) {
-      untyped.signal("approveApplication", reviewerId);
-      log.info("Approve signal sent to workflow {}", workflowId);
+      ComplianceDecision ack = workflow.approveApplication(reviewerId);
+      log.info("Approve update acknowledged by workflow {}: {}", workflowId, ack);
     } else {
-      untyped.signal("rejectApplication", reviewerId, reason);
-      log.info("Reject signal sent to workflow {} with reason: {}", workflowId, reason);
+      ComplianceDecision ack = workflow.rejectApplication(reviewerId, reason);
+      log.info("Reject update acknowledged by workflow {}: {}", workflowId, ack);
     }
   }
 }

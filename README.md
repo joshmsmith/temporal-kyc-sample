@@ -11,7 +11,7 @@ Customer onboarding can run for hours or days, depends on external checks and ma
 |---|---|
 | Long-running / can get stuck | Single workflow with a 30-day timer SLA; worker restarts are transparent |
 | External KYC vendor check | Dedicated activity with heartbeat, exponential backoff, and `scheduleToClose` cap |
-| Human-in-the-loop review | Temporal Durable Timers and Signals for compliance officer approval/rejection |
+| Human-in-the-loop review | Temporal Durable Timers and Updates for compliance officer approval/rejection; validator rejects decisions sent in wrong workflow state |
 | Audit trail | `logAuditEvent` activity writes to Postgres on every state transition |
 | Operator visibility | Search attributes (`ApplicationStep`, `KycStatus`, `ReviewDeadline`) upserted at each step; queryable state via `getOnboardingState` |
 | Idempotency | WorkflowId `KYC-<customerId>` prevents duplicate onboarding; `activateAccount` uses the input deterministic account ID to derive the customer ID, making retries safe  and idempotent|
@@ -82,7 +82,7 @@ temporal-kyc-sample/
 │       ├── main/java/io/temporal/samples/kyc/
 │       │   ├── KycWorker.java             — long-running worker process
 │       │   ├── KycStarter.java            — starts a workflow execution
-│       │   ├── KycApprover.java           — sends approval/rejection signal
+│       │   ├── KycApprover.java           — sends approval/rejection update
 │       │   ├── KycConstants.java          — task queue name, workflow ID prefix
 │       │   ├── workflow/
 │       │   │   ├── CustomerOnboardingWorkflow.java      (interface)
@@ -175,7 +175,9 @@ The starter prints the `workflowId` (`KYC-CUST-XXXX`). Open `http://localhost:82
 
 When a workflow is in `MANUAL_REVIEW_PENDING`, a compliance officer delivers a decision.
 
-### Approve/Reject Via Signal 
+### Approve/Reject Via Update
+
+Updates are synchronous: the call blocks until the workflow handler runs and returns. The update validator will validate these events and reject the request if the workflow is not yet in `MANUAL_REVIEW_PENDING` or `REVIEW_TIMEOUT`.
 
 ```bash
 # Approve
@@ -189,7 +191,7 @@ DECISION=reject REASON="Incomplete documentation" \
 Or directly with the Temporal CLI:
 
 ```bash
-temporal workflow signal \
+temporal workflow update \
   --workflow-id KYC-CUST-1234 \
   --name approveApplication \
   --input '"reviewer-001"'

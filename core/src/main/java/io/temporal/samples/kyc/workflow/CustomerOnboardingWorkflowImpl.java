@@ -13,6 +13,7 @@ import io.temporal.samples.kyc.model.KycCheckInput;
 import io.temporal.samples.kyc.model.KycResult;
 import io.temporal.samples.kyc.model.KycStatus;
 import io.temporal.samples.kyc.model.OnboardingState;
+import io.temporal.workflow.UpdateValidatorMethod;
 import io.temporal.workflow.Workflow;
 import java.time.Duration;
 import java.time.Instant;
@@ -194,39 +195,51 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
     return status;
   }
 
-  // ── Signal handlers ──────────────────────────────────────────────────────────
+  // ── Update handlers ───────────────────────────────────────────────────────────
+
+  @UpdateValidatorMethod(updateName = "approveApplication")
+  public void validateApproveApplication(String reviewerId) {
+    if (!"MANUAL_REVIEW_PENDING".equals(step) && !"REVIEW_TIMEOUT".equals(step)) {
+      throw new IllegalStateException(
+          "approveApplication update rejected — workflow is in step '"
+              + step
+              + "', expected MANUAL_REVIEW_PENDING or REVIEW_TIMEOUT");
+    }
+  }
+
+  @UpdateValidatorMethod(updateName = "rejectApplication")
+  public void validateRejectApplication(String reviewerId, String reason) {
+    if (!"MANUAL_REVIEW_PENDING".equals(step) && !"REVIEW_TIMEOUT".equals(step)) {
+      throw new IllegalStateException(
+          "rejectApplication update rejected — workflow is in step '"
+              + step
+              + "', expected MANUAL_REVIEW_PENDING or REVIEW_TIMEOUT");
+    }
+  }
 
   @Override
-  public void approveApplication(String reviewerId) {
-    log.info("Approve signal received for customer {} from reviewer {}", customerId, reviewerId);
-    if (!"MANUAL_REVIEW_PENDING".equals(step)) {
-      log.warn(
-          "approveApplication signal ignored — workflow is in step '{}', not MANUAL_REVIEW_PENDING",
-          step);
-    }
+  public ComplianceDecision approveApplication(String reviewerId) {
+    log.info("Approve update received for customer {} from reviewer {}", customerId, reviewerId);
     reviewDecision =
         new ComplianceDecision(
             true,
             reviewerId,
-            "Approved via signal",
+            "Approved via update",
             Instant.ofEpochMilli(Workflow.currentTimeMillis()));
+    return reviewDecision;
   }
 
   @Override
-  public void rejectApplication(String reviewerId, String reason) {
+  public ComplianceDecision rejectApplication(String reviewerId, String reason) {
     log.info(
-        "Reject signal received for customer {} from reviewer {}: {}",
+        "Reject update received for customer {} from reviewer {}: {}",
         customerId,
         reviewerId,
         reason);
-    if (!"MANUAL_REVIEW_PENDING".equals(step)) {
-      log.warn(
-          "rejectApplication signal ignored — workflow is in step '{}', not MANUAL_REVIEW_PENDING",
-          step);
-    }
     reviewDecision =
         new ComplianceDecision(
             false, reviewerId, reason, Instant.ofEpochMilli(Workflow.currentTimeMillis()));
+    return reviewDecision;
   }
 
   // ── Query handler ─────────────────────────────────────────────────────────────

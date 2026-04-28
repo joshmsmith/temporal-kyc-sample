@@ -113,11 +113,23 @@ class CustomerOnboardingWorkflowTest {
             Instant.now(),
             ApplicationScenario.NEEDS_REVIEW);
 
-    // Start the workflow asynchronously so we can send the approval signal.
+    // Start the workflow asynchronously so we can send the approval update.
     WorkflowClient.start(workflow::onboard, request);
 
-    // Send the compliance officer approval signal.
-    workflow.approveApplication("reviewer-001");
+    // Updates are validated synchronously, so wait until the workflow reaches
+    // MANUAL_REVIEW_PENDING before sending — unlike signals, an update sent too
+    // early would be rejected by the validator.
+    long deadline = System.currentTimeMillis() + 5_000;
+    while (!"MANUAL_REVIEW_PENDING".equals(workflow.getOnboardingState().getStep())) {
+      assertTrue(
+          System.currentTimeMillis() < deadline, "Timed out waiting for MANUAL_REVIEW_PENDING");
+      Thread.sleep(50);
+    }
+
+    // Send the compliance officer approval update and verify the acknowledgement.
+    ComplianceDecision ack = workflow.approveApplication("reviewer-001");
+    assertTrue(ack.isApproved());
+    assertEquals("reviewer-001", ack.getReviewerId());
 
     // Wait for the workflow to complete (time-skipping handles the 30-day await instantly).
     ApplicationStatus result =
