@@ -17,6 +17,7 @@ import io.temporal.samples.kyc.workflow.CustomerOnboardingWorkflow;
 import io.temporal.samples.kyc.workflow.CustomerOnboardingWorkflowImpl;
 import io.temporal.testing.TestWorkflowEnvironment;
 import io.temporal.worker.Worker;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -118,11 +119,8 @@ class CustomerOnboardingWorkflowTest {
     // Updates are validated synchronously, so wait until the workflow reaches
     // MANUAL_REVIEW_PENDING before sending — unlike signals, an update sent too
     // early would be rejected by the validator.
-    long deadline = System.currentTimeMillis() + 5_000;
     while (!"MANUAL_REVIEW_PENDING".equals(workflow.getOnboardingState().getStep())) {
-      assertTrue(
-          System.currentTimeMillis() < deadline, "Timed out waiting for MANUAL_REVIEW_PENDING");
-      Thread.sleep(50);
+      testEnv.sleep(Duration.ofMillis(50));
     }
 
     // Send the compliance officer approval update and verify the acknowledgement.
@@ -162,11 +160,9 @@ class CustomerOnboardingWorkflowTest {
     WorkflowClient.start(workflow::onboard, request);
 
     // Wait until the workflow is in MANUAL_REVIEW_PENDING before sending the update.
-    long deadline = System.currentTimeMillis() + 5_000;
+
     while (!"MANUAL_REVIEW_PENDING".equals(workflow.getOnboardingState().getStep())) {
-      assertTrue(
-          System.currentTimeMillis() < deadline, "Timed out waiting for MANUAL_REVIEW_PENDING");
-      Thread.sleep(50);
+      testEnv.sleep(Duration.ofMillis(50));
     }
 
     // Send the compliance officer rejection update and verify the acknowledgement.
