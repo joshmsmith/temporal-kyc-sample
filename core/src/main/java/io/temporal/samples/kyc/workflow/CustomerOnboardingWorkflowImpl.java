@@ -25,8 +25,6 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
   // ── Search attribute keys (register in Temporal namespace before running) ──
   static final SearchAttributeKey<String> APPLICATION_STEP =
       SearchAttributeKey.forKeyword("ApplicationStep");
-  static final SearchAttributeKey<String> CUSTOMER_ID_ATTR =
-      SearchAttributeKey.forKeyword("CustomerId");
   static final SearchAttributeKey<String> KYC_STATUS_ATTR =
       SearchAttributeKey.forKeyword("KycStatus");
   static final SearchAttributeKey<String> REVIEW_DEADLINE =

@@ -16,6 +16,7 @@ Customer onboarding can run for hours or days, depends on external checks and ma
 | Operator visibility | Search attributes (`ApplicationStep`, `KycStatus`, `ReviewDeadline`) upserted at each step; queryable state via `getOnboardingState` |
 | Idempotency | WorkflowId `KYC-<customerId>` prevents duplicate onboarding; `activateAccount` uses the input deterministic account ID to derive the customer ID, making retries safe  and idempotent|
 
+ This is a demonstration of how Temporal addresses these concerns. Activities and endpoints are stubbed. See notes in [Activity integration points](#activity-integration-points) below for more information about productionalization.
 
 ---
 
@@ -30,13 +31,27 @@ Application Submitted
         ▼
   performKycCheck ─────────────────────────── [KYC Vendor]
         │
-   ┌────┴────┐
+   ┌────┴────┐────────────────────────┐
 FAILED   NEEDS_MANUAL_REVIEW      PASSED
    │         │                        │
 REJECTED  submitToComplianceQueue     │
           │                           │
           ▼                           │
    await(signal, 30 days)             │
+          │                           │
+     ┌────┴──────────────┐            │
+  decision           (timeout)        │
+     │                   │            │
+     │          escalateReview        │
+     │                   │            │
+     │        await(signal, 7 days)   │
+     │                   │            │
+     │              ┌────┴────┐       │
+     │           decision  (timeout)  │
+     │              │         │       │
+     │              │      REJECTED   │
+     │              │                 │
+     └──────────────┘                 │
           │                           │
      ┌────┴────┐                      │
   APPROVED  REJECTED              (merge)
@@ -126,7 +141,6 @@ temporal server start-dev
 
 ```bash
 temporal operator search-attribute create --name ApplicationStep  --type Keyword
-temporal operator search-attribute create --name CustomerId       --type Keyword
 temporal operator search-attribute create --name KycStatus        --type Keyword
 temporal operator search-attribute create --name ReviewDeadline   --type Keyword
 ```
@@ -220,9 +234,9 @@ Six tests covering: happy path, manual review approved, manual review rejected, 
 
 ## Activity integration points
 
-Each activity method in `OnboardingActivitiesImpl` contains a `// IMPL-TO-DO:` comment marking where the real system call goes.
+Each activity method in `OnboardingActivitiesImpl` contains a `// IMPL-TO-DO:` comment marking where the real system call goes. To productionalize this application, start with those Implementation To Dos.
 
-Activities with multiple parameters use a single input object (e.g., `KycCheckInput`, `ActivateAccountInput`). This is intentional: Temporal serializes activity arguments positionally, so adding a new parameter to a flat signature is a breaking change for in-flight workflows. Adding a new field to an input object is backwards-compatible because Jackson ignores unknown fields during deserialization.
+Activities with multiple parameters often use a single input object (e.g., `KycCheckInput`, `ActivateAccountInput`). This is intentional: Temporal serializes activity arguments positionally, so adding a new parameter to a flat signature is a breaking change for in-flight workflows. Adding a new field to an input object is backwards-compatible because Jackson ignores unknown fields during deserialization.
 
 | Activity | Integration |
 |---|---|
