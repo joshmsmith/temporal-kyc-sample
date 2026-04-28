@@ -1,3 +1,10 @@
+# Gradle build outputs and caches
+build/
+.gradle/
+
+# Local machine-specific Gradle properties (e.g. org.gradle.java.home)
+gradle.properties
+
 # Compiled class file
 *.class
 
