@@ -22,7 +22,8 @@ import org.slf4j.Logger;
 
 public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflow {
 
-  private static final Logger log = Workflow.getLogger(AuditingCustomerOnboardingWorkflowImpl.class);
+  private static final Logger log =
+      Workflow.getLogger(AuditingCustomerOnboardingWorkflowImpl.class);
 
   // ── Search attribute keys (register in Temporal namespace before running) ──
   static final SearchAttributeKey<String> APPLICATION_STEP =
@@ -106,7 +107,6 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
 
   // Cached for query handler — set at the start of onboard()
   private String customerId = "";
-  private ApplicationStatus latestStatus = null;
 
   // ── Workflow entry point ────────────────────────────────────────────────────
 
@@ -140,7 +140,6 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
       onboardingActivities.notifyCustomer(customerId, "REJECTED", "KYC check did not pass.");
       updateStep("REJECTED", 100);
       ApplicationStatus status = ApplicationStatus.rejected("KYC check failed");
-      latestStatus = status;
       return status;
     }
 
@@ -193,7 +192,6 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
         updateStep("REJECTED", 100);
         ApplicationStatus status =
             ApplicationStatus.rejected("Compliance review rejected: " + reviewDecision.getReason());
-        latestStatus = status;
         return status;
       }
     }
@@ -237,7 +235,6 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
             customerId, "REJECTED", "Application could not be processed at this time.");
         updateStep("REJECTED", 100);
         ApplicationStatus status = ApplicationStatus.rejected("Sanctions screening flagged");
-        latestStatus = status;
         return status;
       }
       log.info("Sanctions screening CLEAR for customer {}", customerId);
@@ -260,7 +257,6 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
 
     log.info("Onboarding complete for customer {}. Account: {}", customerId, accountId);
     ApplicationStatus status = ApplicationStatus.activated(accountId);
-    latestStatus = status;
     return status;
   }
 
@@ -293,39 +289,6 @@ public class AuditingCustomerOnboardingWorkflowImpl implements CustomerOnboardin
       return;
     }
     reviewDecision = new ComplianceDecision(false, reviewerId, reason, Instant.now());
-  }
-
-  // ── Update handler + validator ───────────────────────────────────────────────
-
-  @Override
-  public void validateComplianceDecision(ComplianceDecision decision) {
-    // Validator: read-only, must not mutate state or block
-    if (!"MANUAL_REVIEW_PENDING".equals(step)) {
-      throw new IllegalStateException(
-          "Cannot submit compliance decision: workflow is in step '"
-              + step
-              + "', expected MANUAL_REVIEW_PENDING");
-    }
-    if (reviewDecision != null) {
-      throw new IllegalStateException(
-          "Cannot submit compliance decision: a decision has already been recorded for customer "
-              + customerId);
-    }
-  }
-
-  @Override
-  public ApplicationStatus submitComplianceDecision(ComplianceDecision decision) {
-    log.info(
-        "Compliance decision update received for customer {}: approved={}, reviewer={}",
-        customerId,
-        decision.isApproved(),
-        decision.getReviewerId());
-    reviewDecision = decision;
-    // Return current best-known status so the caller gets immediate confirmation
-    if (latestStatus != null) {
-      return latestStatus;
-    }
-    return new ApplicationStatus(null, null, "Decision recorded, workflow proceeding");
   }
 
   // ── Query handler ─────────────────────────────────────────────────────────────

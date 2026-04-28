@@ -2,12 +2,8 @@ package io.temporal.samples.kyc;
 
 import io.temporal.client.WorkflowClient;
 import io.temporal.client.WorkflowStub;
-import io.temporal.samples.kyc.model.ApplicationStatus;
-import io.temporal.samples.kyc.model.ComplianceDecision;
-import io.temporal.samples.kyc.workflow.CustomerOnboardingWorkflow;
 import io.temporal.serviceclient.WorkflowServiceStubs;
 import io.temporal.serviceclient.WorkflowServiceStubsOptions;
-import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,11 +21,6 @@ import org.slf4j.LoggerFactory;
  * DECISION=reject REASON="Incomplete documentation" \
  *   ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycApprover \
  *   -Parg=KYC-CUST-1234
- *
- * # Approve via Update (synchronous, returns current status):
- * MECHANISM=update \
- *   ./gradlew -q execute -PmainClass=io.temporal.samples.kyc.KycApprover \
- *   -Parg=KYC-CUST-1234
  * </pre>
  *
  * <p>Environment variables:
@@ -38,7 +29,6 @@ import org.slf4j.LoggerFactory;
  *   <li>DECISION — "approve" (default) or "reject"
  *   <li>REASON — rejection reason (only used when DECISION=reject)
  *   <li>REVIEWER_ID — reviewer identifier (default: "compliance-officer-1")
- *   <li>MECHANISM — "signal" (default) or "update"
  * </ul>
  */
 public class KycApprover {
@@ -58,15 +48,13 @@ public class KycApprover {
     String decision = System.getenv().getOrDefault("DECISION", "approve");
     String reason = System.getenv().getOrDefault("REASON", "Approved by compliance officer");
     String reviewerId = System.getenv().getOrDefault("REVIEWER_ID", "compliance-officer-1");
-    String mechanism = System.getenv().getOrDefault("MECHANISM", "signal");
 
     boolean approved = "approve".equalsIgnoreCase(decision);
 
     log.info(
-        "Sending {} decision to workflow {} via {} (reviewer={}, approved={})",
+        "Sending {} decision to workflow {} via signal (reviewer={}, approved={})",
         decision,
         workflowId,
-        mechanism,
         reviewerId,
         approved);
 
@@ -79,25 +67,13 @@ public class KycApprover {
             service,
             io.temporal.client.WorkflowClientOptions.newBuilder().setNamespace(namespace).build());
 
-    if ("update".equalsIgnoreCase(mechanism)) {
-      // Update: synchronous, validator runs first, returns current ApplicationStatus
-      CustomerOnboardingWorkflow workflow =
-          client.newWorkflowStub(CustomerOnboardingWorkflow.class, workflowId);
-      ComplianceDecision complianceDecision =
-          new ComplianceDecision(approved, reviewerId, reason, Instant.now());
-      ApplicationStatus status = workflow.submitComplianceDecision(complianceDecision);
-      log.info("Update accepted. Workflow status: {}", status);
-
+    WorkflowStub untyped = client.newUntypedWorkflowStub(workflowId);
+    if (approved) {
+      untyped.signal("approveApplication", reviewerId);
+      log.info("Approve signal sent to workflow {}", workflowId);
     } else {
-      // Signal: fire-and-forget
-      WorkflowStub untyped = client.newUntypedWorkflowStub(workflowId);
-      if (approved) {
-        untyped.signal("approveApplication", reviewerId);
-        log.info("Approve signal sent to workflow {}", workflowId);
-      } else {
-        untyped.signal("rejectApplication", reviewerId, reason);
-        log.info("Reject signal sent to workflow {} with reason: {}", workflowId, reason);
-      }
+      untyped.signal("rejectApplication", reviewerId, reason);
+      log.info("Reject signal sent to workflow {} with reason: {}", workflowId, reason);
     }
   }
 }

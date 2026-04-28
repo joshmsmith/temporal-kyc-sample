@@ -2,12 +2,9 @@ package io.temporal.samples.kyc.workflow;
 
 import io.temporal.samples.kyc.model.ApplicationRequest;
 import io.temporal.samples.kyc.model.ApplicationStatus;
-import io.temporal.samples.kyc.model.ComplianceDecision;
 import io.temporal.samples.kyc.model.OnboardingState;
 import io.temporal.workflow.QueryMethod;
 import io.temporal.workflow.SignalMethod;
-import io.temporal.workflow.UpdateMethod;
-import io.temporal.workflow.UpdateValidatorMethod;
 import io.temporal.workflow.WorkflowInterface;
 import io.temporal.workflow.WorkflowMethod;
 
@@ -19,15 +16,9 @@ import io.temporal.workflow.WorkflowMethod;
  *
  * <h3>Human-in-the-loop</h3>
  *
- * Two mechanisms are provided for a compliance officer to deliver a review decision:
- *
- * <ul>
- *   <li>{@link #approveApplication} / {@link #rejectApplication} — fire-and-forget Signals,
- *       suitable for CLI tools and async integrations
- *   <li>{@link #submitComplianceDecision} — synchronous Update, suitable for systems that need
- *       validation confirmation (rejects duplicate decisions and wrong-state decisions before they
- *       are persisted in history)
- * </ul>
+ * Signals are provided for a compliance officer to deliver a review decision: {@link
+ * #approveApplication} / {@link #rejectApplication} — fire-and-forget Signals, suitable for CLI
+ * tools and async integrations.
  *
  * <h3>Operator visibility</h3>
  *
@@ -59,24 +50,6 @@ public interface CustomerOnboardingWorkflow {
    */
   @SignalMethod
   void rejectApplication(String reviewerId, String reason);
-
-  // ── Human-in-the-loop: Update (synchronous with validation) ─────────────────
-
-  /**
-   * Update: Deliver a compliance review decision synchronously. Returns the current
-   * ApplicationStatus. The validator rejects the call if:
-   *
-   * <ul>
-   *   <li>The workflow is not in the MANUAL_REVIEW_PENDING step, or
-   *   <li>A decision has already been recorded.
-   * </ul>
-   */
-  @UpdateMethod
-  ApplicationStatus submitComplianceDecision(ComplianceDecision decision);
-
-  /** Validator for submitComplianceDecision — must not modify state or block. */
-  @UpdateValidatorMethod(updateName = "submitComplianceDecision")
-  void validateComplianceDecision(ComplianceDecision decision);
 
   // ── Operator visibility: Query ───────────────────────────────────────────────
 

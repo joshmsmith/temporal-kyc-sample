@@ -3,7 +3,6 @@ package io.temporal.samples.kyc.workflow;
 import io.temporal.activity.ActivityOptions;
 import io.temporal.common.RetryOptions;
 import io.temporal.common.SearchAttributeKey;
-import io.temporal.failure.ApplicationFailure;
 import io.temporal.samples.kyc.activities.OnboardingActivities;
 import io.temporal.samples.kyc.model.ApplicationRequest;
 import io.temporal.samples.kyc.model.ApplicationScenario;
@@ -30,6 +29,7 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
       SearchAttributeKey.forKeyword("KycStatus");
   static final SearchAttributeKey<String> REVIEW_DEADLINE =
       SearchAttributeKey.forKeyword("ReviewDeadline");
+
   // ── Activity stubs — three distinct retry / timeout policies ──────────────
 
   /** Default: short-lived steps (document storage, queue submission, notification). */
@@ -81,7 +81,6 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
 
   // Cached for query handler — set at the start of onboard()
   private String customerId = "";
-  private ApplicationStatus latestStatus = null;
 
   // ── Workflow entry point ────────────────────────────────────────────────────
 
@@ -108,7 +107,6 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
       onboardingActivities.notifyCustomer(customerId, "REJECTED", "KYC check did not pass.");
       updateStep("REJECTED", 100);
       ApplicationStatus status = ApplicationStatus.rejected("KYC check failed");
-      latestStatus = status;
       return status;
     }
 
@@ -132,11 +130,23 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
       boolean decisionReceived = Workflow.await(Duration.ofDays(30), () -> reviewDecision != null);
 
       if (!decisionReceived) {
-        // SLA breach — escalate and fail the workflow so it surfaces in the UI
+        // SLA breach — escalate and wait an additional 7 days before auto-rejecting
         onboardingActivities.escalateReview(customerId);
-        updateStep("REVIEW_TIMEOUT", 100);
-        throw ApplicationFailure.newNonRetryableFailure(
-            "Compliance review SLA exceeded 30 days for customer " + customerId, "ReviewTimeout");
+        updateStep("REVIEW_TIMEOUT", 55);
+        log.info(
+            "Compliance review SLA exceeded for customer {}. Waiting 7 more days after escalation.",
+            customerId);
+
+        boolean finalDecisionReceived =
+            Workflow.await(Duration.ofDays(7), () -> reviewDecision != null);
+
+        if (!finalDecisionReceived) {
+          // Still no decision after grace period — auto-reject without failing the workflow
+          onboardingActivities.notifyCustomer(
+              customerId, "REJECTED", "Compliance review not completed within SLA.");
+          updateStep("REJECTED", 100);
+          return ApplicationStatus.rejected("Compliance review SLA exceeded");
+        }
       }
 
       log.info(
@@ -150,7 +160,6 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
         updateStep("REJECTED", 100);
         ApplicationStatus status =
             ApplicationStatus.rejected("Compliance review rejected: " + reviewDecision.getReason());
-        latestStatus = status;
         return status;
       }
     }
@@ -169,7 +178,6 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
 
     log.info("Onboarding complete for customer {}. Account: {}", customerId, accountId);
     ApplicationStatus status = ApplicationStatus.activated(accountId);
-    latestStatus = status;
     return status;
   }
 
@@ -202,39 +210,6 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
       return;
     }
     reviewDecision = new ComplianceDecision(false, reviewerId, reason, Instant.now());
-  }
-
-  // ── Update handler + validator ───────────────────────────────────────────────
-
-  @Override
-  public void validateComplianceDecision(ComplianceDecision decision) {
-    // Validator: read-only, must not mutate state or block
-    if (!"MANUAL_REVIEW_PENDING".equals(step)) {
-      throw new IllegalStateException(
-          "Cannot submit compliance decision: workflow is in step '"
-              + step
-              + "', expected MANUAL_REVIEW_PENDING");
-    }
-    if (reviewDecision != null) {
-      throw new IllegalStateException(
-          "Cannot submit compliance decision: a decision has already been recorded for customer "
-              + customerId);
-    }
-  }
-
-  @Override
-  public ApplicationStatus submitComplianceDecision(ComplianceDecision decision) {
-    log.info(
-        "Compliance decision update received for customer {}: approved={}, reviewer={}",
-        customerId,
-        decision.isApproved(),
-        decision.getReviewerId());
-    reviewDecision = decision;
-    // Return current best-known status so the caller gets immediate confirmation
-    if (latestStatus != null) {
-      return latestStatus;
-    }
-    return new ApplicationStatus(null, null, "Decision recorded, workflow proceeding");
   }
 
   // ── Query handler ─────────────────────────────────────────────────────────────
