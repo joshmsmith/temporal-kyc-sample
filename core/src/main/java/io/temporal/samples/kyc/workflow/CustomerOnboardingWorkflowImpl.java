@@ -39,13 +39,12 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
           OnboardingActivities.class,
           ActivityOptions.newBuilder()
               .setStartToCloseTimeout(Duration.ofMinutes(1))
-              .setScheduleToCloseTimeout(Duration.ofHours(1))
+              .setScheduleToCloseTimeout(Duration.ofHours(10))
               .setRetryOptions(
                   RetryOptions.newBuilder()
                       .setInitialInterval(Duration.ofSeconds(1))
                       .setBackoffCoefficient(2.0)
                       .setMaximumInterval(Duration.ofSeconds(30))
-                      .setMaximumAttempts(5)
                       .build())
               .build());
 
@@ -60,14 +59,13 @@ public class CustomerOnboardingWorkflowImpl implements CustomerOnboardingWorkflo
           OnboardingActivities.class,
           ActivityOptions.newBuilder()
               .setStartToCloseTimeout(Duration.ofMinutes(10))
-              .setScheduleToCloseTimeout(Duration.ofHours(1))
+              .setScheduleToCloseTimeout(Duration.ofHours(10))
               .setHeartbeatTimeout(Duration.ofSeconds(45))
               .setRetryOptions(
                   RetryOptions.newBuilder()
                       .setInitialInterval(Duration.ofSeconds(2))
                       .setBackoffCoefficient(2.0)
                       .setMaximumInterval(Duration.ofMinutes(2))
-                      .setMaximumAttempts(10)
                       .build())
               .build());
 
